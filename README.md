@@ -26,7 +26,7 @@ Download the DeepSORT files by running the following command:
 ```bash
 gdown "https://drive.google.com/uc?id=11ZSZcG-bcbueXZC3rN08CM0qqX3eiHxf&confirm=t"
 ```
-After downloading the DeepSORT Zip file from the drive, unzip it.
+After downloading the DeepSORT Zip file from the drive, unzip it by running the script.py file in yolov9 folder.
 
 ## Download Sample Videos
 Download the sample videos from the following links:
