@@ -6,6 +6,7 @@ from pathlib import Path
 import math
 import torch
 import numpy as np
+import cv2
 from deep_sort_pytorch.utils.parser import get_config
 from deep_sort_pytorch.deep_sort import DeepSort
 from collections import deque
@@ -22,6 +23,10 @@ from utils.general import (LOGGER, Profile, check_file, check_img_size, check_im
 from utils.plots import Annotator, colors, save_one_box
 from utils.torch_utils import select_device, smart_inference_mode
 
+palette = (2 ** 11 - 1, 2 ** 15 - 1, 2 ** 20 - 1)
+object_counter = {}
+object_counter1 = {}
+line = [(100, 500), (1050, 500)]
 def initialize_deepsort():
     # Create the Deep SORT configuration object and load settings from the YAML file
     cfg_deep = get_config()
@@ -75,94 +80,135 @@ def colorLabels(classid):
         color = (200, 100,0)
     return tuple(color)
 
-def draw_boxes(frame, bbox_xyxy, draw_trails, identities=None, categories=None, offset=(0,0)):
+def intersect(A, B, C, D):
+    return ccw(A, C, D) != ccw(B, C, D) and ccw(A, B, C) != ccw(A, B, D)
+
+def ccw(A, B, C):
+    return (C[1] - A[1]) * (B[0] - A[0]) > (B[1] - A[1]) * (C[0] - A[0])
+
+def get_direction(point1, point2):
+    direction_str = ""
+    if point1[1] > point2[1]:
+        direction_str += "South"
+    elif point1[1] < point2[1]:
+        direction_str += "North"
+    if point1[0] > point2[0]:
+        direction_str += "East"
+    elif point1[0] < point1[0]:
+        direction_str += "West"
+    return direction_str
+
+def draw_boxes(frame, bbox_xyxy, draw_trails, identities=None, categories=None, offset=(0, 0)):
     height, width, _ = frame.shape
+    cv2.line(frame, line[0], line[1], (46, 162, 112), 3)  # Draw the counting line
+
     for key in list(data_deque):
-      if key not in identities:
-        data_deque.pop(key)
+        if key not in identities:
+            data_deque.pop(key)
 
     for i, box in enumerate(bbox_xyxy):
-        x1, y1, x2, y2 = [int(i) for i in box]
+        x1, y1, x2, y2 = [int(j) for j in box]
         x1 += offset[0]
         y1 += offset[0]
         x2 += offset[0]
         y2 += offset[0]
-        #Find the center point of the bounding box
-        center = int((x1+x2)/2), int((y1+y2)/2)
+
+        center = int((x1 + x2) / 2), int((y1 + y2) / 2)
         cat = int(categories[i]) if categories is not None else 0
         color = colorLabels(cat)
-        #color = [255,0,0]#compute_color_labels(cat)
-        id = int(identities[i]) if identities is not  None else 0
-        # create new buffer for new object
+        id = int(identities[i]) if identities is not None else 0
+
         if id not in data_deque:
-          data_deque[id] = deque(maxlen= 64)
+            data_deque[id] = deque(maxlen=64)
         data_deque[id].appendleft(center)
+
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
         name = className[cat]
-        label = str(id) + ":" + name
+        label = f"{id}: {name}"
         text_size = cv2.getTextSize(label, 0, fontScale=0.5, thickness=2)[0]
         c2 = x1 + text_size[0], y1 - text_size[1] - 3
         cv2.rectangle(frame, (x1, y1), c2, color, -1)
-        cv2.putText(frame, label, (x1, y1 - 2), 0, 0.5, [255, 255, 255], thickness=1, lineType=cv2.LINE_AA)
-        cv2.circle(frame,center, 2, (0,255,0), cv2.FILLED)
+        cv2.putText(frame, label, (x1, y1 - 2), 0, 0.5, (255, 255, 255), thickness=1, lineType=cv2.LINE_AA)
+        cv2.circle(frame, center, 2, (0, 255, 0), cv2.FILLED)
+
         if draw_trails:
-              # draw trail
-              for i in range(1, len(data_deque[id])):
-                  # check if on buffer value is none
-                  if data_deque[id][i - 1] is None or data_deque[id][i] is None:
-                      continue
-                  # generate dynamic thickness of trails
-                  thickness = int(np.sqrt(64 / float(i + i)) * 1.5)
-                  # draw trails
-                  cv2.line(frame, data_deque[id][i - 1], data_deque[id][i], color, thickness)
+            for j in range(1, len(data_deque[id])):
+                if data_deque[id][j - 1] is None or data_deque[id][j] is None:
+                    continue
+                thickness = int(np.sqrt(64 / float(j + j)) * 1.5)
+                cv2.line(frame, data_deque[id][j - 1], data_deque[id][j], color, thickness)
+
+            if len(data_deque[id]) >= 2:
+                direction = get_direction(data_deque[id][0], data_deque[id][1])
+                if intersect(data_deque[id][0], data_deque[id][1], line[0], line[1]):
+                    cv2.line(frame, line[0], line[1], (255, 255, 255), 3)
+                    if "South" in direction:
+                        if name not in object_counter:
+                            object_counter[name] = 1
+                        else:
+                            object_counter[name] += 1
+                    if "North" in direction:
+                        if name not in object_counter1:
+                            object_counter1[name] = 1
+                        else:
+                            object_counter1[name] += 1
+
+    # Display count in top corners
+    y_offset = 50  # To space out multiple lines
+    for idx, (key, value) in enumerate(object_counter1.items()):
+        cnt_str = f"{key}: {value}"
+        cv2.putText(frame, f'Entering: {cnt_str}', (width - 400, 35 + idx * y_offset), 0, 1, (225, 255, 255), thickness=2, lineType=cv2.LINE_AA)
+
+    for idx, (key, value) in enumerate(object_counter.items()):
+        cnt_str1 = f"{key}: {value}"
+        cv2.putText(frame, f'Leaving: {cnt_str1}', (11, 35 + idx * y_offset), 0, 1, (225, 255, 255), thickness=2, lineType=cv2.LINE_AA)
+
     return frame
+
 
 @smart_inference_mode()
 def run(
-        weights=ROOT / 'yolo.pt',  # model path or triton URL
-        source=ROOT / 'data/images',  # file/dir/URL/glob/screen/0(webcam)
-        data=ROOT / 'data/coco.yaml',  # dataset.yaml path
-        imgsz=(640, 640),  # inference size (height, width)
-        conf_thres=0.25,  # confidence threshold
-        iou_thres=0.45,  # NMS IOU threshold
-        max_det=1000,  # maximum detections per image
-        device='',  # cuda device, i.e. 0 or 0,1,2,3 or cpu
-        view_img=False,  # show results
-        nosave=False,  # do not save images/videos
-        classes=None,  # filter by class: --class 0, or --class 0 2 3
-        agnostic_nms=False,  # class-agnostic NMS
-        augment=False,  # augmented inference
-        visualize=False,  # visualize features
-        update=False,  # update all models
-        project=ROOT / 'runs/detect',  # save results to project/name
-        name='exp',  # save results to project/name
-        exist_ok=False,  # existing project/name ok, do not increment
-        half=False,  # use FP16 half-precision inference
-        dnn=False,  # use OpenCV DNN for ONNX inference
-        vid_stride=1,  # video frame-rate stride
-        draw_trails = False,
+        weights=ROOT / 'yolo.pt',
+        source=ROOT / 'data/images',
+        data=ROOT / 'data/coco.yaml',
+        imgsz=(640, 640),
+        conf_thres=0.25,
+        iou_thres=0.45,
+        max_det=1000,
+        device='',
+        view_img=False,
+        nosave=False,
+        classes=None,
+        agnostic_nms=False,
+        augment=False,
+        visualize=False,
+        update=False,
+        project=ROOT / 'runs/detect',
+        name='exp',
+        exist_ok=False,
+        half=False,
+        dnn=False,
+        vid_stride=1,
+        draw_trails=False,
 ):
     source = str(source)
-    save_img = not nosave and not source.endswith('.txt')  # save inference images
+    save_img = not nosave and not source.endswith('.txt')
     is_file = Path(source).suffix[1:] in (IMG_FORMATS + VID_FORMATS)
     is_url = source.lower().startswith(('rtsp://', 'rtmp://', 'http://', 'https://'))
     webcam = source.isnumeric() or source.endswith('.txt') or (is_url and not is_file)
     screenshot = source.lower().startswith('screen')
     if is_url and is_file:
-        source = check_file(source)  # download
+        source = check_file(source)
 
-    # Directories
-    save_dir = increment_path(Path(project) / name, exist_ok=exist_ok)  # increment run
-    save_dir.mkdir(parents=True, exist_ok=True)  # make dir
+    save_dir = increment_path(Path(project) / name, exist_ok=exist_ok)
+    save_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load model
     device = select_device(device)
     model = DetectMultiBackend(weights, device=device, dnn=dnn, data=data, fp16=half)
     stride, names, pt = model.stride, model.names, model.pt
-    imgsz = check_img_size(imgsz, s=stride)  # check image size
+    imgsz = check_img_size(imgsz, s=stride)
 
-    # Dataloader
-    bs = 1  # batch_size
+    bs = 1
     if webcam:
         view_img = check_imshow(warn=True)
         dataset = LoadStreams(source, img_size=imgsz, stride=stride, auto=pt, vid_stride=vid_stride)
@@ -173,69 +219,57 @@ def run(
         dataset = LoadImages(source, img_size=imgsz, stride=stride, auto=pt, vid_stride=vid_stride)
     vid_path, vid_writer = [None] * bs, [None] * bs
 
-    # Run inference
-    model.warmup(imgsz=(1 if pt or model.triton else bs, 3, *imgsz))  # warmup
+    model.warmup(imgsz=(1 if pt or model.triton else bs, 3, *imgsz))
     seen, windows, dt = 0, [], (Profile(), Profile(), Profile())
     for path, im, im0s, vid_cap, s in dataset:
         with dt[0]:
             im = torch.from_numpy(im).to(model.device)
-            im = im.half() if model.fp16 else im.float()  # uint8 to fp16/32
-            im /= 255  # 0 - 255 to 0.0 - 1.0
+            im = im.half() if model.fp16 else im.float()
+            im /= 255
             if len(im.shape) == 3:
-                im = im[None]  # expand for batch dim
+                im = im[None]
 
-        # Inference
         with dt[1]:
             visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False
             pred = model(im, augment=augment, visualize=visualize)
             pred = pred[0][1]
 
-        # NMS
         with dt[2]:
             pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
 
-        # Second-stage classifier (optional)
-        # pred = utils.general.apply_classifier(pred, classifier_model, im, im0s)
-
-        # Process predictions
-        for i, det in enumerate(pred):  # per image
+        for i, det in enumerate(pred):
             seen += 1
-            if webcam:  # batch_size >= 1
+            if webcam:
                 p, im0, frame = path[i], im0s[i].copy(), dataset.count
                 s += f'{i}: '
             else:
                 p, im0, frame = path, im0s.copy(), getattr(dataset, 'frame', 0)
 
-            p = Path(p)  # to Path
-            save_path = str(save_dir / p.name)  # im.jpg
-            txt_path = str(save_dir / 'labels' / p.stem) + ('' if dataset.mode == 'image' else f'_{frame}')  # im.txt
-            s += '%gx%g ' % im.shape[2:]  # print string
-            gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
+            p = Path(p)
+            save_path = str(save_dir / p.name)
+            txt_path = str(save_dir / 'labels' / p.stem) + ('' if dataset.mode == 'image' else f'_{frame}')
+            s += '%gx%g ' % im.shape[2:]
+            gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]
             ims = im0.copy()
             if len(det):
-                # Rescale boxes from img_size to im0 size
                 det[:, :4] = scale_boxes(im.shape[2:], det[:, :4], im0.shape).round()
 
-                # Print results
                 for c in det[:, 5].unique():
-                    n = (det[:, 5] == c).sum()  # detections per class
-                    s += f"{n} {names[int(c)]}{'s' * (n > 1)}, "  # add to string
+                    n = (det[:, 5] == c).sum()
+                    s += f"{n} {names[int(c)]}{'s' * (n > 1)}, "
                 xywh_bboxs = []
                 confs = []
                 oids = []
                 outputs = []
-                # Write results
                 for *xyxy, conf, cls in reversed(det):
                     x1, y1, x2, y2 = xyxy
                     x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-                    #Find the Center Coordinates for each of the detected object
-                    cx, cy = int((x1+x2)/2), int((y1+y2)/2)
-                    #Find the Width and Height of the Boundng box
-                    bbox_width = abs(x1-x2)
-                    bbox_height = abs(y1-y2)
+                    cx, cy = int((x1 + x2) / 2), int((y1 + y2) / 2)
+                    bbox_width = abs(x1 - x2)
+                    bbox_height = abs(y1 - y2)
                     xcycwh = [cx, cy, bbox_width, bbox_height]
                     xywh_bboxs.append(xcycwh)
-                    conf = math.ceil(conf*100)/100
+                    conf = math.ceil(conf * 100) / 100
                     confs.append(conf)
                     classNameInt = int(cls)
                     oids.append(classNameInt)
@@ -248,35 +282,31 @@ def run(
                     object_id = outputs[:, -1]
                     draw_boxes(ims, bbox_xyxy, draw_trails, identities, object_id)
 
-            # Stream results
             if view_img:
                 if platform.system() == 'Linux' and p not in windows:
                     windows.append(p)
-                    cv2.namedWindow(str(p), cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)  # allow window resize (Linux)
+                    cv2.namedWindow(str(p), cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
                     cv2.resizeWindow(str(p), ims.shape[1], ims.shape[0])
                 cv2.imshow(str(p), ims)
-                cv2.waitKey(1)  # 1 millisecond
-            # Save results (image with detections)
+                cv2.waitKey(1)
             if save_img:
-                if vid_path[i] != save_path:  # new video
+                if vid_path[i] != save_path:
                     vid_path[i] = save_path
                     if isinstance(vid_writer[i], cv2.VideoWriter):
-                        vid_writer[i].release()  # release previous video writer
-                    if vid_cap:  # video
+                        vid_writer[i].release()
+                    if vid_cap:
                         fps = vid_cap.get(cv2.CAP_PROP_FPS)
                         w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                         h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                    else:  # stream
+                    else:
                         fps, w, h = 30, ims.shape[1], ims.shape[0]
-                    save_path = str(Path(save_path).with_suffix('.mp4'))  # force *.mp4 suffix on results videos
+                    save_path = str(Path(save_path).with_suffix('.mp4'))
                     vid_writer[i] = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
                 vid_writer[i].write(ims)
 
-        # Print time (inference-only)
         LOGGER.info(f"{s}{'' if len(det) else '(no detections), '}{dt[1].dt * 1E3:.1f}ms")
     if update:
-        strip_optimizer(weights[0])  # update model (to fix SourceChangeWarning)
-
+        strip_optimizer(weights[0])
 
 def parse_opt():
     parser = argparse.ArgumentParser()
