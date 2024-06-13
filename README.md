@@ -56,7 +56,7 @@ For detection and tracking with trails, run:
 ```bash
 python detect_dual_tracking.py --weights 'yolov9-c.pt' --source 'your video.mp4' --device 0 --draw-trails
 ```
-##Object Counting
+## Object Counting
 The object counting takes place when the trail of the vechicle detected intersects with the line, so make sure you run the command accordingly.
 
 Output files will be created in the working-dir/runs/detect/obj-tracking directory with the original filename.
