@@ -189,15 +189,32 @@ def draw_boxes(frame, bbox_xyxy, draw_trails, identities=None, categories=None, 
                             object_counter1[name] += 1
                         save_to_database(name, object_image, "Entering")  # Save entering objects
 
-    # Display count in top corners
-    y_offset = 50  # To space out multiple lines
+    # Display Count in top right corner for vehicles entering
     for idx, (key, value) in enumerate(object_counter1.items()):
         cnt_str = f"{key}: {value}"
-        cv2.putText(frame, f'Entering: {cnt_str}', (width - 400, 35 + idx * y_offset), 0, 1, (225, 255, 255), thickness=2, lineType=cv2.LINE_AA)
 
+        # Draw a line for the title
+        cv2.line(frame, (width - 500, 25), (width, 25), [85, 45, 255], 40)
+        cv2.putText(frame, 'Number of Vehicles Entering', (width - 500, 35), 0, 1, [225, 255, 255], thickness=2,
+                    lineType=cv2.LINE_AA)
+
+        # Draw a line for each count and display the text
+        cv2.line(frame, (width - 150, 65 + (idx * 40)), (width, 65 + (idx * 40)), [85, 45, 255], 30)
+        cv2.putText(frame, cnt_str, (width - 150, 75 + (idx * 40)), 0, 1, [255, 255, 255], thickness=2,
+                    lineType=cv2.LINE_AA)
+
+    # Display Count in top left corner for vehicles leaving
     for idx, (key, value) in enumerate(object_counter.items()):
         cnt_str1 = f"{key}: {value}"
-        cv2.putText(frame, f'Leaving: {cnt_str1}', (11, 35 + idx * y_offset), 0, 1, (225, 255, 255), thickness=2, lineType=cv2.LINE_AA)
+
+        # Draw a line for the title
+        cv2.line(frame, (20, 25), (500, 25), [85, 45, 255], 40)
+        cv2.putText(frame, 'Number of Vehicles Leaving', (11, 35), 0, 1, [225, 255, 255], thickness=2,
+                    lineType=cv2.LINE_AA)
+
+        # Draw a line for each count and display the text
+        cv2.line(frame, (20, 65 + (idx * 40)), (127, 65 + (idx * 40)), [85, 45, 255], 30)
+        cv2.putText(frame, cnt_str1, (11, 75 + (idx * 40)), 0, 1, [225, 255, 255], thickness=2, lineType=cv2.LINE_AA)
 
     return frame
 
