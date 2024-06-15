@@ -6,6 +6,9 @@ from pathlib import Path
 import math
 import torch
 import numpy as np
+import mysql.connector
+import datetime
+import base64
 import cv2
 from deep_sort_pytorch.utils.parser import get_config
 from deep_sort_pytorch.deep_sort import DeepSort
@@ -27,6 +30,15 @@ palette = (2 ** 11 - 1, 2 ** 15 - 1, 2 ** 20 - 1)
 object_counter = {}
 object_counter1 = {}
 line = [(100, 500), (1050, 500)]
+
+def connect_to_database():
+    return mysql.connector.connect(
+        host="localhost",
+        user="root",
+        password="1234",
+        database="ObjectTracking"
+    )
+
 def initialize_deepsort():
     # Create the Deep SORT configuration object and load settings from the YAML file
     cfg_deep = get_config()
@@ -52,6 +64,25 @@ def initialize_deepsort():
 
 deepsort = initialize_deepsort()
 data_deque = {}
+
+def save_to_database(object_type, image, entry_exit_status):
+    # Connect to the database
+    conn = connect_to_database()
+    cursor = conn.cursor()
+
+    # Convert image to binary data
+    _, encoded_image = cv2.imencode('.jpg', image)
+    binary_image = encoded_image.tobytes()
+
+    # Insert into the database
+    cursor.execute(
+        "INSERT INTO TrackingResults (object_type, image, entry_exit_status, timestamp) VALUES (%s, %s, %s, %s)",
+        (object_type, binary_image, entry_exit_status, datetime.datetime.now())
+    )
+    conn.commit()
+    cursor.close()
+    conn.close()
+
 def classNames():
     cocoClassNames = ["person", "bicycle", "car", "motorbike", "aeroplane", "bus", "train", "truck", "boat",
                   "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat",
@@ -100,7 +131,7 @@ def get_direction(point1, point2):
 
 def draw_boxes(frame, bbox_xyxy, draw_trails, identities=None, categories=None, offset=(0, 0)):
     height, width, _ = frame.shape
-    cv2.line(frame, line[0], line[1], (46, 162, 112), 3)  # Draw the counting line
+    cv2.line(frame, line[0], line[1], (46, 162, 112), 3)
 
     for key in list(data_deque):
         if key not in identities:
@@ -142,16 +173,21 @@ def draw_boxes(frame, bbox_xyxy, draw_trails, identities=None, categories=None, 
                 direction = get_direction(data_deque[id][0], data_deque[id][1])
                 if intersect(data_deque[id][0], data_deque[id][1], line[0], line[1]):
                     cv2.line(frame, line[0], line[1], (255, 255, 255), 3)
+                    object_image = frame[y1:y2, x1:x2]  # Crop the object image
+
                     if "South" in direction:
                         if name not in object_counter:
                             object_counter[name] = 1
                         else:
                             object_counter[name] += 1
+                        save_to_database(name, object_image, "Leaving")  # Save leaving objects
+
                     if "North" in direction:
                         if name not in object_counter1:
                             object_counter1[name] = 1
                         else:
                             object_counter1[name] += 1
+                        save_to_database(name, object_image, "Entering")  # Save entering objects
 
     # Display count in top corners
     y_offset = 50  # To space out multiple lines
